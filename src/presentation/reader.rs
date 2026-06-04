@@ -67,6 +67,7 @@ pub struct SessionManager {
     holder_le_role: Option<LeRole>,
     holder_central_client_modes: Vec<CentralClientMode>,
     holder_peripheral_server_modes: Vec<PeripheralServerMode>,
+    doc_type: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -203,6 +204,7 @@ impl SessionManager {
         handover: Handover,
         namespaces: device_request::Namespaces,
         trust_anchor_registry: TrustAnchorRegistry,
+        doc_type: Option<String>,
     ) -> Result<(Self, Vec<u8>, [u8; 16])> {
         let (
             device_engagement_bytes,
@@ -326,10 +328,11 @@ impl SessionManager {
             holder_le_role,
             holder_central_client_modes,
             holder_peripheral_server_modes,
+            doc_type: doc_type.clone(),
         };
 
         let request = session_manager
-            .build_request(namespaces)
+            .build_request(namespaces, doc_type.clone())
             .context("failed to build device request")?;
         let session = SessionEstablishment {
             data: request.into(),
@@ -381,8 +384,8 @@ impl SessionManager {
     }
 
     /// Creates a new request with specified elements to request.
-    pub fn new_request(&mut self, namespaces: device_request::Namespaces) -> Result<Vec<u8>> {
-        let request = self.build_request(namespaces)?;
+    pub fn new_request(&mut self, namespaces: device_request::Namespaces, doc_type: Option<String>) -> Result<Vec<u8>> {
+        let request = self.build_request(namespaces, doc_type)?;
         let session = SessionData {
             data: Some(request.into()),
             status: None,
@@ -390,14 +393,15 @@ impl SessionManager {
         cbor::to_vec(&session).map_err(Into::into)
     }
 
-    fn build_request(&mut self, namespaces: device_request::Namespaces) -> Result<Vec<u8>> {
+    fn build_request(&mut self, namespaces: device_request::Namespaces, doc_type: Option<String>) -> Result<Vec<u8>> {
         // if !validate_request(namespaces.clone()).is_ok() {
         //     return Err(anyhow::Error::msg(
         //         "At least one of the namespaces contain an invalid combination of fields to request",
         //     ));
         // }
+        let doc_type = doc_type.unwrap_or_else(|| "org.iso.18013.5.1.mDL".into());
         let items_request = ItemsRequest {
-            doc_type: "org.iso.18013.5.1.mDL".into(),
+            doc_type,
             namespaces,
             request_info: None,
         };
@@ -466,7 +470,9 @@ impl SessionManager {
             .map(|docs| docs.iter().map(|d| d.doc_type.clone()).collect())
             .unwrap_or_default();
 
-        match parse(&device_response) {
+        let doc_type = self.doc_type.clone().unwrap_or("org.iso.18013.5.1.mDL".to_string());
+
+        match parse(&device_response, doc_type.clone()) {
             Ok((document, x5chain, namespaces)) => {
                 validate_response(
                     self.session_transcript.clone(),
@@ -493,8 +499,9 @@ impl SessionManager {
 
 pub fn parse(
     device_response: &DeviceResponse,
+    doc_type: String,
 ) -> Result<(&Document, X5Chain, BTreeMap<String, Value>), Error> {
-    let document = get_document(device_response)?;
+    let document = get_document(device_response, doc_type.clone())?;
     let header = document.issuer_signed.issuer_auth.unprotected.clone();
     let x5chain = header
         .rest
@@ -545,13 +552,13 @@ fn parse_response(value: ciborium::Value) -> Result<Value, Error> {
     }
 }
 
-fn get_document(device_response: &DeviceResponse) -> Result<&Document, Error> {
+fn get_document(device_response: &DeviceResponse, doc_type: String) -> Result<&Document, Error> {
     device_response
         .documents
         .as_ref()
         .ok_or(ReaderError::DeviceTransmissionError)?
         .iter()
-        .find(|doc| doc.doc_type == "org.iso.18013.5.1.mDL")
+        .find(|doc| doc.doc_type == doc_type)
         .ok_or(ReaderError::DocumentTypeError)
 }
 
