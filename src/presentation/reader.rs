@@ -472,6 +472,8 @@ impl SessionManager {
 
         let doc_type = self.doc_type.clone().unwrap_or("org.iso.18013.5.1.mDL".to_string());
 
+        println!("Processing device response with doc_type: {}", doc_type);
+
         match parse(&device_response, doc_type.clone()) {
             Ok((document, x5chain, namespaces)) => {
                 validate_response(
